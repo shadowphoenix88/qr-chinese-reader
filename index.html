@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#ffb6c1">
+<title>Sophie 的讀讀機 · QR Chinese Reader</title>
+<style>
+:root{--pink:#ff8fab;--yellow:#ffe066;--blue:#74c0fc;--green:#8ce99a;--ink:#3d3d5c}
+*{box-sizing:border-box}
+body{margin:0;font-family:-apple-system,"PingFang TC","Noto Sans TC","Microsoft JhengHei",system-ui,sans-serif;background:linear-gradient(#fff0f5,#e7f5ff);color:var(--ink);min-height:100vh;padding:env(safe-area-inset-top) 12px 40px}
+h1{text-align:center;font-size:1.6rem;margin:14px 0 8px}
+.card{background:#fff;border-radius:24px;padding:14px;margin:12px auto;max-width:560px;box-shadow:0 4px 14px #0001}
+button,.btn{font:inherit;font-size:1.25rem;font-weight:700;border:0;border-radius:20px;padding:16px 18px;margin:5px 3px;min-height:60px;cursor:pointer;color:var(--ink);box-shadow:0 4px 0 #0002;display:inline-block;text-decoration:none;text-align:center}
+button:active,.btn:active{transform:translateY(3px);box-shadow:none}
+.pink{background:var(--pink);color:#fff}.yellow{background:var(--yellow)}.blue{background:var(--blue)}.green{background:var(--green)}.gray{background:#eee}
+.big{width:100%;font-size:1.6rem;min-height:80px}
+.row{display:flex;flex-wrap:wrap;justify-content:center}
+.row>*{flex:1 1 40%}
+#videoWrap{position:relative;border-radius:20px;overflow:hidden;background:#000;display:none}
+video{width:100%;display:block}
+#videoWrap::after{content:"";position:absolute;inset:18%;border:5px dashed var(--yellow);border-radius:20px;pointer-events:none}
+#zh{font-size:2.6rem;line-height:1.5;text-align:center;word-break:break-all}
+#py{font-size:1.3rem;text-align:center;color:#c2255c;margin-bottom:8px}
+ruby rt{font-size:.38em;color:#c2255c}
+#url{word-break:break-all;font-size:1rem;background:#f8f9fa;padding:8px;border-radius:12px}
+audio{width:100%;margin-top:8px}
+textarea{width:100%;font-size:1.5rem;border-radius:16px;border:3px solid var(--blue);padding:10px;min-height:90px}
+select{font-size:1rem;padding:10px;border-radius:12px;width:100%;margin-top:6px}
+#history li{display:flex;align-items:center;gap:6px;border-bottom:1px dashed #ddd;padding:4px 0}
+#history li span{flex:1;font-size:1.2rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#history button{min-height:44px;padding:8px 12px;font-size:1rem}
+ul{list-style:none;padding:0;margin:0}
+#msg{text-align:center;min-height:1.4em;color:#868e96}
+.hidden{display:none!important}
+label.btn input{display:none}
+</style>
+</head>
+<body>
+<h1>🐰 Sophie 的讀讀機 ⭐</h1>
+
+<div class="card">
+  <div id="videoWrap"><video id="video" playsinline muted></video></div>
+  <canvas id="canvas" class="hidden"></canvas>
+  <div class="row">
+    <button id="scanBtn" class="pink big">📷 掃描 Scan</button>
+    <button id="stopBtn" class="gray big hidden">⏹ 停止 Stop</button>
+  </div>
+  <div class="row">
+    <label class="btn blue">🖼 從照片 Photo<input id="file" type="file" accept="image/*" capture="environment"></label>
+  </div>
+  <div id="msg"></div>
+</div>
+
+<div id="result" class="card hidden">
+  <div id="textBox" class="hidden">
+    <div id="zh"></div>
+    <div id="py"></div>
+    <div class="row">
+      <button id="replay" class="yellow">🔊 再聽 Again</button>
+      <button id="slow" class="green">🐢 慢慢 Slow</button>
+    </div>
+  </div>
+  <div id="urlBox" class="hidden">
+    <div>🔗 連結 Link:</div>
+    <div id="url"></div>
+    <audio id="audio" controls class="hidden"></audio>
+    <div class="row"><a id="openLink" class="btn blue" target="_blank" rel="noopener noreferrer">↗ 打開連結 Open link</a></div>
+  </div>
+  <div id="otherBox" class="hidden"><div id="other" style="word-break:break-all;font-size:1.2rem"></div></div>
+</div>
+
+<div class="card">
+  <textarea id="typed" placeholder="打字或貼上中文… type / paste Chinese"></textarea>
+  <button id="speakTyped" class="pink big">🗣 說出來 Speak</button>
+</div>
+
+<div class="card">
+  <div>🎙 聲音 Voice <small id="voiceNote"></small></div>
+  <select id="voice"></select>
+  <div style="margin-top:8px">速度 Speed: <input id="rate" type="range" min="0.4" max="1.2" step="0.1" value="0.8" style="width:60%"> <span id="rateV">0.8</span></div>
+</div>
+
+<div class="card">
+  <div class="row" style="align-items:center"><b style="flex:3">📚 紀錄 History</b><button id="clearHist" class="gray" style="flex:1;min-height:44px;font-size:1rem">清除</button></div>
+  <ul id="history"></ul>
+</div>
+
+<script src="vendor/jsQR.js"></script>
+<script src="vendor/pinyin-pro.js"></script>
+<script>
+(function(){
+const $=id=>document.getElementById(id);
+const video=$('video'),canvas=$('canvas'),ctx=canvas.getContext('2d',{willReadFrequently:true});
+const HAN=/[\u3400-\u9fff\uf900-\ufaff]/;
+let stream=null,raf=null,lastText='',voices=[];
+const msg=t=>$('msg').textContent=t||'';
+
+// ---------- speech ----------
+function loadVoices(){
+  if(!('speechSynthesis' in window)){$('voiceNote').textContent='(不支援 speech not supported)';return;}
+  voices=speechSynthesis.getVoices().filter(v=>/^(zh|cmn|yue)/i.test(v.lang));
+  const rank=v=>{const l=v.lang.replace('_','-').toLowerCase();return l==='zh-tw'?0:/hant/.test(l)?1:l==='zh-cn'||/hans/.test(l)?2:l.startsWith('zh')||l.startsWith('cmn')?3:4};
+  voices.sort((a,b)=>rank(a)-rank(b)||(b.localService?1:0)-(a.localService?1:0));
+  const saved=localStorage.getItem('qcr_voice');
+  $('voice').innerHTML=voices.length?voices.map((v,i)=>`<option value="${i}">${v.name} (${v.lang})</option>`).join(''):'<option value="">預設 default (zh-TW)</option>';
+  const si=voices.findIndex(v=>v.voiceURI===saved); if(si>=0)$('voice').value=si;
+  $('voiceNote').textContent=voices.length?'':'(找不到中文聲音 no Chinese voice found — install one in phone settings)';
+}
+if('speechSynthesis' in window){loadVoices();speechSynthesis.onvoiceschanged=loadVoices;setTimeout(loadVoices,800);}
+$('voice').onchange=()=>{const v=voices[$('voice').value];if(v)localStorage.setItem('qcr_voice',v.voiceURI);};
+$('rate').value=localStorage.getItem('qcr_rate')||0.8;$('rateV').textContent=$('rate').value;
+$('rate').oninput=()=>{$('rateV').textContent=$('rate').value;localStorage.setItem('qcr_rate',$('rate').value);};
+function speak(text,rate){
+  if(!('speechSynthesis' in window)||!text)return;
+  speechSynthesis.cancel();
+  const u=new SpeechSynthesisUtterance(text);
+  const v=voices[$('voice').value];
+  if(v){u.voice=v;u.lang=v.lang;}else u.lang='zh-TW';
+  u.rate=rate||parseFloat($('rate').value);
+  speechSynthesis.speak(u);
+}
+
+// ---------- display ----------
+const esc=s=>s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function rubyHTML(text){
+  try{
+    return pinyinPro.pinyin(text,{type:'all'}).map(o=>o.isZh?`<ruby>${esc(o.origin)}<rt>${esc(o.pinyin)}</rt></ruby>`:esc(o.origin)).join('');
+  }catch(e){return esc(text);}
+}
+function show(content,fromHistory){
+  content=(content||'').trim(); if(!content)return;
+  lastText='';
+  ['textBox','urlBox','otherBox'].forEach(i=>$(i).classList.add('hidden'));
+  $('audio').classList.add('hidden');$('audio').pause();
+  $('result').classList.remove('hidden');
+  let url=null; try{const u=new URL(content);if(/^https?:$/.test(u.protocol))url=u;}catch(e){}
+  if(url){
+    $('urlBox').classList.remove('hidden');
+    $('url').textContent=content;$('openLink').href=url.href;
+    if(/\.(mp3|m4a|aac|wav|ogg|oga|opus|flac|webm)(\?|#|$)/i.test(url.pathname+url.search)){
+      $('audio').src=url.href;$('audio').classList.remove('hidden');
+      $('audio').play().catch(()=>{});
+    }
+    // URL may also carry chinese (e.g. ?text=)
+    const dec=decodeURIComponent(url.href);
+    if(HAN.test(dec)){const zh=(dec.match(/[\u3400-\u9fff\uf900-\ufaff\uff0c\u3002\uff01\uff1f\s]+/g)||[]).join(' ').trim(); if(zh) showText(zh);}
+  }else if(HAN.test(content)){
+    showText(content);
+  }else{
+    $('otherBox').classList.remove('hidden');$('other').textContent=content;
+  }
+  if(!fromHistory)addHistory(content);
+  $('result').scrollIntoView({behavior:'smooth'});
+}
+function showText(t){
+  lastText=t;$('textBox').classList.remove('hidden');
+  $('zh').innerHTML=rubyHTML(t);
+  try{$('py').textContent=pinyinPro.pinyin(t);}catch(e){$('py').textContent='';}
+  speak(t);
+}
+$('replay').onclick=()=>speak(lastText);
+$('slow').onclick=()=>speak(lastText,0.5);
+$('speakTyped').onclick=()=>{const t=$('typed').value.trim();if(t)show(t);};
+
+// ---------- history ----------
+const H=()=>{try{return JSON.parse(localStorage.getItem('qcr_hist')||'[]')}catch(e){return[]}};
+function addHistory(c){let h=H().filter(x=>x!==c);h.unshift(c);localStorage.setItem('qcr_hist',JSON.stringify(h.slice(0,30)));renderHist();}
+function renderHist(){
+  const h=H();
+  $('history').innerHTML=h.length?h.map((c,i)=>`<li><span>${esc(c)}</span><button class="yellow" data-i="${i}">▶</button><button class="gray" data-d="${i}">✕</button></li>`).join(''):'<li><span style="color:#aaa">還沒有 nothing yet</span></li>';
+}
+$('history').onclick=e=>{const b=e.target.closest('button');if(!b)return;const h=H();
+  if(b.dataset.i!=null)show(h[b.dataset.i],true);
+  else{h.splice(b.dataset.d,1);localStorage.setItem('qcr_hist',JSON.stringify(h));renderHist();}};
+$('clearHist').onclick=()=>{if(confirm('清除紀錄? Clear history?')){localStorage.removeItem('qcr_hist');renderHist();}};
+renderHist();
+
+// ---------- QR ----------
+function decodeFrom(src,w,h){
+  const maxDim=1000,s=Math.min(1,maxDim/Math.max(w,h));
+  canvas.width=Math.round(w*s);canvas.height=Math.round(h*s);
+  ctx.drawImage(src,0,0,canvas.width,canvas.height);
+  const img=ctx.getImageData(0,0,canvas.width,canvas.height);
+  return jsQR(img.data,img.width,img.height,{inversionAttempts:'attemptBoth'});
+}
+function qrText(code){
+  // jsQR gives .data (decoded) and .binaryData; re-decode bytes as UTF-8 if mojibake
+  try{if(code.binaryData&&code.binaryData.length){const u=new TextDecoder('utf-8',{fatal:true}).decode(new Uint8Array(code.binaryData));if(u)return u;}}catch(e){}
+  return code.data;
+}
+async function startScan(){
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){msg('相機不可用 Camera unavailable (needs HTTPS). Try 照片 Photo.');return;}
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}},audio:false});
+  }catch(e){msg('無法開啟相機 Camera error: '+e.name+'. Try 照片 Photo.');return;}
+  if('speechSynthesis' in window){speechSynthesis.speak(new SpeechSynthesisUtterance(''));} // unlock iOS speech in user gesture
+  video.srcObject=stream;await video.play().catch(()=>{});
+  $('videoWrap').style.display='block';$('scanBtn').classList.add('hidden');$('stopBtn').classList.remove('hidden');
+  msg('對準 QR code… Point at the QR code');
+  let last=0;
+  const tick=t=>{
+    raf=requestAnimationFrame(tick);
+    if(t-last<150||video.readyState<2)return; last=t;
+    const code=decodeFrom(video,video.videoWidth,video.videoHeight);
+    if(code&&code.data!==undefined){
+      if(navigator.vibrate)navigator.vibrate(80);
+      stopScan();msg('找到了! Found it 🎉');show(qrText(code));
+    }
+  };
+  raf=requestAnimationFrame(tick);
+}
+function stopScan(){
+  cancelAnimationFrame(raf);if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;
+  $('videoWrap').style.display='none';$('scanBtn').classList.remove('hidden');$('stopBtn').classList.add('hidden');msg('');
+}
+$('scanBtn').onclick=startScan;$('stopBtn').onclick=stopScan;
+$('file').onchange=e=>{
+  const f=e.target.files[0];if(!f)return;
+  if('speechSynthesis' in window)speechSynthesis.speak(new SpeechSynthesisUtterance(''));
+  const img=new Image();
+  img.onload=()=>{const code=decodeFrom(img,img.naturalWidth,img.naturalHeight);URL.revokeObjectURL(img.src);
+    if(code){msg('找到了! Found it 🎉');show(qrText(code));}else msg('找不到 QR code 😢 Try a closer, sharper photo.');
+    e.target.value='';};
+  img.onerror=()=>msg('無法讀取圖片 Cannot read image');
+  img.src=URL.createObjectURL(f);
+};
+window.__qcr={show,rubyHTML};
+})();
+</script>
+</body>
+</html>
